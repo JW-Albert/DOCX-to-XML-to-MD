@@ -1,4 +1,15 @@
-# Python-Templater
+# DOCX-to-XML-to-MD
+
+把 Word (`.docx`) / PowerPoint (`.pptx`) 轉成 Markdown。程式直接讀取檔案內部的 XML，圖片會依 `.rels` 對應的位置輸出，所以不會遺失或錯位。只用 Python 標準函式庫。
+
+```bash
+python src/main.py report.docx slides.pptx -o output/
+# 輸出 output/report.md、output/report_media/*、output/slides.md、output/slides_media/*
+```
+
+設計與 issues 請見 [docs/PLAN.md](docs/PLAN.md)。
+
+---
 
 這是一個 Python 模板 Repo，支援 **Windows 與 Linux** 環境，搭配 [uv](https://github.com/astral-sh/uv)（Windows）或 venv（Linux）管理虛擬環境與套件，並預設整合 Claude Code 開發流程與 GitHub Actions CI。
 
