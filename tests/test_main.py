@@ -60,6 +60,35 @@ def test_docx(tmp_path):
     assert (tmp_path / "doc_media" / "image1.png").read_bytes() == PNG
 
 
+def li(text, num, ilvl, left=None):
+    ind = f'<w:ind w:left="{left}"/>' if left else ""
+    return (f'<w:p><w:pPr><w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="{num}"/></w:numPr>{ind}</w:pPr>'
+            f"<w:r><w:t>{text}</w:t></w:r></w:p>")
+
+
+def test_docx_messy_lists(tmp_path):
+    """Hand-edited Word lists: nesting follows visual indent, numbers keep counting."""
+    numbering = f"""<w:numbering {W}>
+<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl>
+  <w:lvl w:ilvl="1"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num><w:num w:numId="3"><w:abstractNumId w:val="1"/></w:num>
+</w:numbering>"""
+    body = (
+        li("orphan", 2, 1, 1080) + "<w:p><w:r><w:t>text</w:t></w:r></w:p>"  # starts at level 2: must not become code
+        + li("A", 1, 0, 720) + li("a1", 2, 0, 1440)  # same visual level written two ways
+        + li("B", 1, 0, 720) + li("b1", 3, 1, 1440)
+    )
+    src = make_zip(tmp_path / "l.docx", {
+        "word/document.xml": f"<w:document {W}><w:body>{body}</w:body></w:document>",
+        "word/numbering.xml": numbering,
+    })
+    assert convert(src).read_text(encoding="utf-8") == (
+        "- orphan\n\ntext\n\n1. A\n    - a1\n2. B\n    - b1\n"
+    )
+
+
 def sp(ph, *paras):
     nv = f'<p:nvSpPr><p:nvPr><p:ph type="{ph}"/></p:nvPr></p:nvSpPr>' if ph else "<p:nvSpPr><p:nvPr/></p:nvSpPr>"
     return f"<p:sp>{nv}<p:txBody>{''.join(paras)}</p:txBody></p:sp>"

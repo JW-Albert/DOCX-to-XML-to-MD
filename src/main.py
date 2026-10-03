@@ -115,6 +115,13 @@ def _on(el: ET.Element | None) -> bool:
     return el is not None and el.get(W_VAL, "true") not in ("0", "false", "none")
 
 
+def _indent(ppr: ET.Element | None) -> int | None:
+    """Left indent in twips from a w:pPr, None when unset."""
+    ind = ppr.find("w:ind", NS) if ppr is not None else None
+    val = ind.get(q("w:left")) or ind.get(q("w:start")) if ind is not None else None
+    return int(val) if val and val.lstrip("-").isdigit() else None
+
+
 class Docx:
     def __init__(self, pkg: Package):
         self.pkg = pkg
@@ -141,19 +148,21 @@ class Docx:
                 if lvl <= 6:
                     self.heading[s.get(q("w:styleId"))] = lvl
 
-        self.bullet: dict[tuple[str, str], bool] = {}  # (numId, ilvl) -> bullet?
+        self.lvl: dict[tuple[str, int], tuple[bool, int, int | None]] = {}  # (numId, ilvl) -> (bullet?, start, indent)
         if "word/numbering.xml" in pkg.names:
             root = pkg.xml("word/numbering.xml")
-            abstract = {
-                a.get(q("w:abstractNumId")): {
-                    lvl.get(q("w:ilvl")): lvl.find("w:numFmt", NS) for lvl in a.iterfind("w:lvl", NS)
-                }
-                for a in root.iterfind("w:abstractNum", NS)
-            }
+            abstract = {a.get(q("w:abstractNumId")): list(a.iterfind("w:lvl", NS)) for a in root.iterfind("w:abstractNum", NS)}
             for n in root.iterfind("w:num", NS):
                 aid = n.find("w:abstractNumId", NS)
-                for ilvl, f in abstract.get(aid.get(W_VAL) if aid is not None else None, {}).items():
-                    self.bullet[(n.get(q("w:numId")), ilvl)] = f is not None and f.get(W_VAL) == "bullet"
+                for lvl in abstract.get(aid.get(W_VAL) if aid is not None else None, []):
+                    f, start = lvl.find("w:numFmt", NS), lvl.find("w:start", NS)
+                    self.lvl[(n.get(q("w:numId")), int(lvl.get(q("w:ilvl"), "0")))] = (
+                        f is not None and f.get(W_VAL) == "bullet",
+                        int(start.get(W_VAL, "1")) if start is not None else 1,
+                        _indent(lvl.find("w:pPr", NS)),
+                    )
+        self.count: dict[tuple[str, int], int] = {}  # running number per (numId, ilvl)
+        self.indents: list[int] = []  # indent stack of the list being emitted
 
     def convert(self) -> str:
         return join(list(self.blocks(self.pkg.xml("word/document.xml").find("w:body", NS))))
@@ -163,6 +172,7 @@ class Docx:
             if el.tag == q("w:p"):
                 yield self.paragraph(el)
             elif el.tag == q("w:tbl"):
+                self.indents = []
                 yield self.table(el), False
             elif el.tag == q("w:sdt"):
                 content = el.find("w:sdtContent", NS)
@@ -183,23 +193,36 @@ class Docx:
     def paragraph(self, p: ET.Element) -> tuple[str, bool]:
         text = self.inline(p).strip()
         ppr = p.find("w:pPr", NS)
-        if not text or ppr is None:
+        if not text:
+            return "", False  # empty paragraph: keep the current list going
+        if ppr is None:
+            self.indents = []
             return text, False
         style = ppr.find("w:pStyle", NS)
         style_id = style.get(W_VAL) if style is not None else None
-        lvl = self.heading.get(style_id)
-        if lvl:
-            return "#" * lvl + " " + text, False
         # ponytail: style's own numPr only, basedOn chain not followed
         num_pr = ppr.find("w:numPr", NS)
         num_pr = num_pr if num_pr is not None else self.style_num.get(style_id)
         num_id = num_pr.find("w:numId", NS) if num_pr is not None else None
-        ilvl = num_pr.find("w:ilvl", NS) if num_pr is not None else None
-        if num_id is not None and num_id.get(W_VAL) != "0":
-            level = ilvl.get(W_VAL, "0") if ilvl is not None else "0"
-            marker = "-" if self.bullet.get((num_id.get(W_VAL), level), True) else "1."
-            return "    " * int(level) + f"{marker} {text}", True
-        return text, False
+        if style_id not in self.heading and num_id is not None and num_id.get(W_VAL, "0") != "0":
+            ilvl = num_pr.find("w:ilvl", NS)
+            key = (num_id.get(W_VAL), int(ilvl.get(W_VAL, "0")) if ilvl is not None else 0)
+            bullet, start, indent = self.lvl.get(key, (True, 1, None))
+            indent = _indent(ppr) or indent or 720 * (key[1] + 1)
+            # nest by visual indent, not ilvl: hand-edited docs mix ilvl/numId for the same visual level
+            while self.indents and self.indents[-1] > indent:
+                self.indents.pop()
+            if not self.indents or self.indents[-1] < indent:
+                self.indents.append(indent)
+            # ponytail: counters per numId; Word can also continue numbering across numIds sharing an abstractNum
+            self.count[key] = n = self.count.get(key, start - 1) + 1
+            for k in [k for k in self.count if k[0] == key[0] and k[1] > key[1]]:
+                del self.count[k]
+            marker = "-" if bullet else f"{n}."
+            return "    " * (len(self.indents) - 1) + f"{marker} {text}", True
+        self.indents = []
+        lvl = self.heading.get(style_id)
+        return ("#" * lvl + " " + text if lvl else text), False
 
     def inline(self, el: ET.Element) -> str:
         segs: list[tuple[str, bool, bool]] = []
