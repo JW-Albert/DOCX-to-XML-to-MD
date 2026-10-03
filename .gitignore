@@ -236,3 +236,8 @@ cuda_info.txt
 # MacOS
 .DS_STORE
 .DS_Store
+# Office input files (may contain private data); test fixtures are kept
+*.docx
+*.pptx
+!tests/fixtures/*.docx
+!tests/fixtures/*.pptx
