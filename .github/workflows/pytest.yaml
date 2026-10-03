@@ -1,0 +1,37 @@
+name: "PyTest"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Set up virtual environment
+        env:
+          TERM: dumb
+        run: |
+          chmod +x python/Linux_venv.sh
+          ./python/Linux_venv.sh
+
+      - name: Run tests
+        env:
+          TERM: dumb
+        run: |
+          chmod +x PyTest/Linux.sh
+          ./PyTest/Linux.sh
